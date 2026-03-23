@@ -1,11 +1,7 @@
 {
-  "name": "AdaptiveCueing.EditModeTests",
-  "references": [
-    "AdaptiveCueing.Runtime"
-  ],
-  "includePlatforms": [
-    "Editor"
-  ],
+  "name": "AdaptiveCueing.Runtime",
+  "references": [],
+  "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
   "overrideReferences": false,
@@ -13,8 +9,5 @@
   "autoReferenced": true,
   "defineConstraints": [],
   "versionDefines": [],
-  "optionalUnityReferences": [
-    "TestAssemblies"
-  ],
   "noEngineReferences": false
 }

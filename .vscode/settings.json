@@ -51,5 +51,5 @@
         "temp/": true,
         "Temp/": true
     },
-    "dotnet.defaultSolution": "SCH.sln"
+    "dotnet.defaultSolution": "Adaptive-Cueing-ML2.sln"
 }
