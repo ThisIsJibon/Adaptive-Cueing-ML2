@@ -40,9 +40,6 @@ namespace AdaptiveCueing
 
         private Material runtimeCueMaterial;
         private MaterialPropertyBlock propertyBlock;
-        private Vector3 lastForward = Vector3.forward;
-        private Vector3 lastPlacementForward;
-        private bool cuesPlaced;
 
         private GroundCalibrationState calibrationState = GroundCalibrationState.Calibrating;
         private float calibrationStartTime;
@@ -50,12 +47,15 @@ namespace AdaptiveCueing
         private float calibratedGroundHeight;
         private Vector3 deploymentOrigin;
         private Vector3 deploymentForward;
+        private int placedCueCount;
 
         public CueState LatestCueState { get; private set; }
         public GroundCalibrationState CalibrationState => calibrationState;
         public float CalibrationProgress => Mathf.Clamp01((Time.time - calibrationStartTime) / calibrationDuration);
         public int GroundSampleCount => groundSamples.Count;
         public float CalibratedGroundHeight => calibratedGroundHeight;
+        public int PlacedCueCount => placedCueCount;
+        public bool IsReadyToPlaceCues => calibrationState == GroundCalibrationState.Deployed;
 
         private void Awake()
         {
@@ -87,7 +87,7 @@ namespace AdaptiveCueing
             calibrationStartTime = Time.time;
             lastSampleTime = 0f;
             groundSamples.Clear();
-            cuesPlaced = false;
+            placedCueCount = 0;
             SetCueVisibility(0);
 
             if (showCalibrationProgress)
@@ -106,6 +106,61 @@ namespace AdaptiveCueing
             {
                 Debug.LogWarning($"[AdaptiveCueing] Cannot deploy yet. Need at least {minimumSamplesRequired} ground samples, have {groundSamples.Count}. Keep looking at the ground.");
             }
+        }
+
+        public bool PlaceNextCue()
+        {
+            if (calibrationState != GroundCalibrationState.Deployed)
+            {
+                Debug.LogWarning("[AdaptiveCueing] Cannot place cue - calibration not complete.");
+                return false;
+            }
+
+            if (!LatestCueState.IsValid)
+            {
+                Debug.LogWarning("[AdaptiveCueing] Cannot place cue - no valid cue state.");
+                return false;
+            }
+
+            if (placedCueCount >= LatestCueState.CueCount)
+            {
+                Debug.Log("[AdaptiveCueing] All cues already placed.");
+                return false;
+            }
+
+            EnsureCueCount(placedCueCount + 1);
+
+            CueVisual cueVisual = cueVisuals[placedCueCount];
+            Vector3 right = Vector3.Cross(Vector3.up, deploymentForward).normalized;
+
+            float side = alternateFeet ? (placedCueCount % 2 == 0 ? -1f : 1f) : 0f;
+            float forwardDistance = LatestCueState.DistanceAhead + (LatestCueState.Spacing * placedCueCount);
+
+            Vector3 targetPosition = deploymentOrigin
+                + (deploymentForward * forwardDistance)
+                + (right * side * LatestCueState.LateralOffset)
+                + (Vector3.up * hoverHeight);
+
+            Quaternion targetRotation = Quaternion.LookRotation(deploymentForward, Vector3.up);
+
+            cueVisual.Transform.position = targetPosition;
+            cueVisual.Transform.rotation = targetRotation;
+            cueVisual.Transform.localScale = new Vector3(cueScale.x, cueScale.y, Mathf.Max(cueScale.z, LatestCueState.Spacing * 0.55f));
+            cueVisual.WorldPosition = targetPosition;
+            cueVisual.Initialized = true;
+            cueVisual.Root.SetActive(true);
+
+            placedCueCount++;
+
+            Debug.Log($"[AdaptiveCueing] Placed cue {placedCueCount}/{LatestCueState.CueCount}");
+            return true;
+        }
+
+        public void ClearAllCues()
+        {
+            placedCueCount = 0;
+            SetCueVisibility(0);
+            Debug.Log("[AdaptiveCueing] All cues cleared.");
         }
 
         private void UpdateCalibration()
@@ -189,14 +244,15 @@ namespace AdaptiveCueing
             }
 
             calibrationState = GroundCalibrationState.Deployed;
-            cuesPlaced = false;
+            placedCueCount = 0;
 
-            Debug.Log($"[AdaptiveCueing] Calibration complete! Ground height: {calibratedGroundHeight:F2}m from {groundSamples.Count} samples.");
+            Debug.Log($"[AdaptiveCueing] Calibration complete! Ground height: {calibratedGroundHeight:F2}m from {groundSamples.Count} samples. Press controller button to place cues.");
         }
 
         public void ResetCuePlacement()
         {
-            cuesPlaced = false;
+            placedCueCount = 0;
+            SetCueVisibility(0);
             foreach (var cue in cueVisuals)
             {
                 cue.Initialized = false;
@@ -209,125 +265,65 @@ namespace AdaptiveCueing
 
             if (calibrationState != GroundCalibrationState.Deployed)
             {
-                SetCueVisibility(0);
                 return;
             }
 
             if (!cueState.IsValid)
             {
-                SetCueVisibility(0);
-                cuesPlaced = false;
                 return;
             }
 
             Transform anchor = ResolveCueAnchor();
-
             if (anchor == null)
             {
-                SetCueVisibility(0);
-                cuesPlaced = false;
                 return;
             }
 
-            EnsureCueCount(Mathf.Max(1, cueState.CueCount));
-
-            GroundPose baseGroundPose = new GroundPose(
-                new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z),
-                Vector3.up);
-
-            Vector3 right = Vector3.Cross(Vector3.up, deploymentForward).normalized;
-
-            RenderWorldLockedCues(cueState, currentTime, anchor.position, baseGroundPose, deploymentForward, right);
+            UpdatePlacedCuesVisuals(cueState, currentTime, anchor.position);
         }
 
-        private void RenderWorldLockedCues(CueState cueState, float currentTime, Vector3 anchorPosition,
-            GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
+        private void UpdatePlacedCuesVisuals(CueState cueState, float currentTime, Vector3 anchorPosition)
         {
-            if (!cuesPlaced)
-            {
-                PlaceAllCuesAhead(cueState, baseGroundPose, flatForward, right);
-                lastPlacementForward = flatForward;
-                cuesPlaced = true;
-            }
+            Vector3 userGroundPos = new Vector3(anchorPosition.x, calibratedGroundHeight, anchorPosition.z);
+            Vector3 right = Vector3.Cross(Vector3.up, deploymentForward).normalized;
 
-            Vector3 userGroundPos = new Vector3(anchorPosition.x, baseGroundPose.Position.y, anchorPosition.z);
-
-            for (int index = 0; index < cueVisuals.Count; index++)
+            for (int index = 0; index < placedCueCount && index < cueVisuals.Count; index++)
             {
                 CueVisual cueVisual = cueVisuals[index];
-                bool shouldDisplay = index < cueState.CueCount;
-                cueVisual.Root.SetActive(shouldDisplay);
 
-                if (!shouldDisplay)
+                if (!cueVisual.Root.activeSelf)
                 {
                     continue;
                 }
 
                 Vector3 cueGroundPos = new Vector3(
                     cueVisual.Transform.position.x,
-                    baseGroundPose.Position.y,
+                    calibratedGroundHeight,
                     cueVisual.Transform.position.z);
 
                 Vector3 toCue = cueGroundPos - userGroundPos;
-                float distanceAlongForward = Vector3.Dot(toCue, flatForward);
+                float distanceAlongForward = Vector3.Dot(toCue, deploymentForward);
 
                 if (distanceAlongForward < -recycleDistanceBehind)
                 {
-                    RecycleCueToFront(cueVisual, index, cueState, baseGroundPose, flatForward, right);
+                    RecycleCueToFront(cueVisual, index, cueState, right);
                 }
-
-                cueVisual.Transform.localScale = new Vector3(cueScale.x, cueScale.y, Mathf.Max(cueScale.z, cueState.Spacing * 0.55f));
 
                 float pulse = 1f + (pulseDepth * Mathf.Sin((currentTime + (index * 0.12f)) * cueState.PulseRate * Mathf.PI * 2f));
                 UpdateCueVisual(cueVisual, cueState, pulse);
             }
         }
 
-        private void PlaceAllCuesAhead(CueState cueState, GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
-        {
-            for (int index = 0; index < cueVisuals.Count; index++)
-            {
-                CueVisual cueVisual = cueVisuals[index];
-
-                if (index >= cueState.CueCount)
-                {
-                    cueVisual.Root.SetActive(false);
-                    continue;
-                }
-
-                PlaceCueAtIndex(cueVisual, index, cueState, baseGroundPose, flatForward, right);
-                cueVisual.Root.SetActive(true);
-            }
-        }
-
-        private void PlaceCueAtIndex(CueVisual cueVisual, int index, CueState cueState,
-            GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
-        {
-            float side = alternateFeet ? (index % 2 == 0 ? -1f : 1f) : 0f;
-            float forwardDistance = cueState.DistanceAhead + (cueState.Spacing * index);
-
-            Vector3 targetPosition = deploymentOrigin
-                + (flatForward * forwardDistance)
-                + (right * side * cueState.LateralOffset)
-                + (Vector3.up * hoverHeight);
-
-            Quaternion targetRotation = Quaternion.LookRotation(flatForward, Vector3.up);
-
-            cueVisual.Transform.position = targetPosition;
-            cueVisual.Transform.rotation = targetRotation;
-            cueVisual.WorldPosition = targetPosition;
-            cueVisual.Initialized = true;
-        }
-
-        private void RecycleCueToFront(CueVisual cueVisual, int cueIndex, CueState cueState,
-            GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
+        private void RecycleCueToFront(CueVisual cueVisual, int cueIndex, CueState cueState, Vector3 right)
         {
             float maxDistance = 0f;
-            for (int i = 0; i < cueVisuals.Count && i < cueState.CueCount; i++)
+            for (int i = 0; i < placedCueCount && i < cueVisuals.Count; i++)
             {
+                if (!cueVisuals[i].Root.activeSelf) continue;
+                
                 Vector3 cuePos = cueVisuals[i].Transform.position;
                 Vector3 toOtherCue = cuePos - deploymentOrigin;
-                float dist = Vector3.Dot(toOtherCue, flatForward);
+                float dist = Vector3.Dot(toOtherCue, deploymentForward);
                 if (dist > maxDistance)
                 {
                     maxDistance = dist;
@@ -338,11 +334,11 @@ namespace AdaptiveCueing
             float newForwardDistance = maxDistance + cueState.Spacing;
 
             Vector3 targetPosition = deploymentOrigin
-                + (flatForward * newForwardDistance)
+                + (deploymentForward * newForwardDistance)
                 + (right * side * cueState.LateralOffset)
                 + (Vector3.up * hoverHeight);
 
-            Quaternion targetRotation = Quaternion.LookRotation(flatForward, Vector3.up);
+            Quaternion targetRotation = Quaternion.LookRotation(deploymentForward, Vector3.up);
 
             cueVisual.Transform.position = targetPosition;
             cueVisual.Transform.rotation = targetRotation;
