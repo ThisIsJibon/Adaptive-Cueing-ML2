@@ -122,6 +122,215 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &371315448
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 371315457}
+  - component: {fileID: 371315456}
+  - component: {fileID: 371315455}
+  - component: {fileID: 371315454}
+  - component: {fileID: 371315453}
+  - component: {fileID: 371315452}
+  - component: {fileID: 371315451}
+  - component: {fileID: 371315450}
+  - component: {fileID: 371315449}
+  m_Layer: 0
+  m_Name: AdaptiveCueing
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &371315449
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c7d3403bddbaf6458ff918ca760bdab, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  normalSpacing: 0.65
+  normalBrightness: 0.55
+  normalPulseRate: 1.6
+  normalDistanceAhead: 0.8
+  normalLateralOffset: 0.18
+  normalCueCount: 6
+  normalCueColor: {r: 0.1, g: 0.85, b: 1, a: 1}
+  fogSpacing: 0.38
+  fogBrightness: 1.25
+  fogPulseRate: 2.2
+  fogDistanceAhead: 0.45
+  fogLateralOffset: 0.16
+  fogCueCount: 8
+  fogCueColor: {r: 1, g: 0.82, b: 0.2, a: 1}
+  adaptationSpeed: 5
+  predictiveAssistWeight: 0.35
+--- !u!114 &371315450
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 911c1c23d5578fe4e995b96b071067b5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  lowVelocityThreshold: 0.18
+  rhythmConsistencyThreshold: 0.55
+  minimumMovementEffort: 0.12
+  requiredCandidateDuration: 0.35
+  fogOnConfidence: 0.65
+  fogOffConfidence: 0.45
+  confidenceSmoothing: 6
+--- !u!114 &371315451
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 28d95bb55e7505346bfb9df3038bc804, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  signalSmoothing: 8
+  baselineHeightTracking: 0.75
+  maxTrackedStepIntervals: 8
+  minimumStepBobAmplitude: 0.01
+--- !u!114 &371315452
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 879dcf5fa05481f4cb829fff8d0a9091, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sourceMode: 0
+  useHeadTrackingInEditor: 0
+  headTransform: {fileID: 1522833907}
+  fallbackCamera: {fileID: 1522833913}
+  mockWalkingSpeed: 0.95
+  mockStepFrequency: 1.8
+  mockVerticalAmplitude: 0.035
+  mockLateralAmplitude: 0.025
+  scriptedWalkDuration: 8
+  scriptedFreezeDuration: 4
+  scriptedRecoveryDuration: 6
+  mockTravelDirection: {x: 0, y: 0, z: 1}
+--- !u!114 &371315453
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 673129cd83c13ab42ac8cd9925d8461f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  runPipeline: 1
+  logStateTransitions: 1
+  sensorManager: {fileID: 371315452}
+  dataProcessor: {fileID: 371315451}
+  foGDetector: {fileID: 371315450}
+  cueController: {fileID: 371315449}
+  arRenderer: {fileID: 371315456}
+--- !u!114 &371315454
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cf78400b3e7ea5b41bee68a72a70c4ba, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  arRenderer: {fileID: 0}
+  triggerAction: {fileID: 0}
+  bumperAction: {fileID: 0}
+  placeCueKey: 1
+  clearCuesKey: 17
+--- !u!114 &371315455
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e0d7aefbd5870546ac16b9a9059b61e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  arRenderer: {fileID: 0}
+  groundHeightOffset: 0
+  autoSetGroundOnLocalized: 1
+  localizationTimeout: 10
+--- !u!114 &371315456
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b876a081b2872754199461719fbd0262, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  cueAnchor: {fileID: 1522833907}
+  fallbackCamera: {fileID: 0}
+  cuePrefab: {fileID: 0}
+  groundLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  groundProbeDistance: 10
+  calibrationDuration: 30
+  sampleInterval: 0.1
+  minimumSamplesRequired: 10
+  showCalibrationProgress: 1
+  waitForMLSpaces: 1
+  mlSpaceDetector: {fileID: 0}
+  cueScale: {x: 0.18, y: 0.02, z: 0.28}
+  hoverHeight: 0.015
+  pulseDepth: 0.25
+  alternateFeet: 1
+  autoRecycleCues: 0
+  recycleDistanceBehind: 0.3
+--- !u!4 &371315457
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 371315448}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &439916130
 GameObject:
   m_ObjectHideFlags: 0
@@ -509,6 +718,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_PlanePrefab: {fileID: 2777020458578778620, guid: 4e6c401a9262db34a929e68fbae90985, type: 3}
   m_DetectionMode: 1
+--- !u!20 &1522833913 stripped
+Camera:
+  m_CorrespondingSourceObject: {fileID: 372886445259064197, guid: 2ad7d02c3ee2a447abc9de300646685d, type: 3}
+  m_PrefabInstance: {fileID: 1522833905}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &1522833914 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6487038207068198745, guid: 2ad7d02c3ee2a447abc9de300646685d, type: 3}
@@ -615,3 +829,4 @@ SceneRoots:
   - {fileID: 1792620858}
   - {fileID: 1522833905}
   - {fileID: 439916134}
+  - {fileID: 371315457}
