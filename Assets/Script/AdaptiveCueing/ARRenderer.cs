@@ -3,6 +3,12 @@ using UnityEngine;
 
 namespace AdaptiveCueing
 {
+    public enum GroundCalibrationState
+    {
+        Calibrating,
+        Deployed
+    }
+
     [DisallowMultipleComponent]
     public class ARRenderer : MonoBehaviour
     {
@@ -10,27 +16,46 @@ namespace AdaptiveCueing
         [SerializeField] private Transform cueAnchor;
         [SerializeField] private Camera fallbackCamera;
         [SerializeField] private GameObject cuePrefab;
-        [SerializeField] private bool usePhysicsGrounding = true;
         [SerializeField] private LayerMask groundLayers = -1;
-        [SerializeField] private float groundHeight = 0f;
-        [SerializeField, Min(0.1f)] private float groundProbeHeight = 1.5f;
-        [SerializeField, Min(0.1f)] private float groundProbeDistance = 4f;
+        [SerializeField, Min(0.1f)] private float groundProbeDistance = 10f;
+
+        [Header("Ground Calibration")]
+        [SerializeField, Min(1f)] private float calibrationDuration = 30f;
+        [SerializeField, Min(0.05f)] private float sampleInterval = 0.1f;
+        [SerializeField, Min(3)] private int minimumSamplesRequired = 10;
+        [SerializeField] private bool showCalibrationProgress = true;
 
         [Header("Cue Appearance")]
         [SerializeField] private Vector3 cueScale = new Vector3(0.18f, 0.02f, 0.28f);
         [SerializeField, Min(0f)] private float hoverHeight = 0.015f;
-        [SerializeField, Range(1f, 30f)] private float transformSmoothing = 12f;
         [SerializeField, Range(0f, 0.5f)] private float pulseDepth = 0.25f;
         [SerializeField] private bool alternateFeet = true;
 
+        [Header("World Locking")]
+        [SerializeField, Min(0.1f)] private float recycleDistanceBehind = 0.3f;
+
         private readonly List<CueVisual> cueVisuals = new List<CueVisual>();
         private readonly List<Renderer> rendererBuffer = new List<Renderer>();
+        private readonly List<float> groundSamples = new List<float>();
 
         private Material runtimeCueMaterial;
         private MaterialPropertyBlock propertyBlock;
         private Vector3 lastForward = Vector3.forward;
+        private Vector3 lastPlacementForward;
+        private bool cuesPlaced;
+
+        private GroundCalibrationState calibrationState = GroundCalibrationState.Calibrating;
+        private float calibrationStartTime;
+        private float lastSampleTime;
+        private float calibratedGroundHeight;
+        private Vector3 deploymentOrigin;
+        private Vector3 deploymentForward;
 
         public CueState LatestCueState { get; private set; }
+        public GroundCalibrationState CalibrationState => calibrationState;
+        public float CalibrationProgress => Mathf.Clamp01((Time.time - calibrationStartTime) / calibrationDuration);
+        public int GroundSampleCount => groundSamples.Count;
+        public float CalibratedGroundHeight => calibratedGroundHeight;
 
         private void Awake()
         {
@@ -38,18 +63,160 @@ namespace AdaptiveCueing
             ResolveCueAnchor();
         }
 
+        private void OnEnable()
+        {
+            StartCalibration();
+        }
+
+        private void Update()
+        {
+            if (calibrationState == GroundCalibrationState.Calibrating)
+            {
+                UpdateCalibration();
+            }
+        }
+
         public void SetAnchor(Transform anchor)
         {
             cueAnchor = anchor;
+        }
+
+        public void StartCalibration()
+        {
+            calibrationState = GroundCalibrationState.Calibrating;
+            calibrationStartTime = Time.time;
+            lastSampleTime = 0f;
+            groundSamples.Clear();
+            cuesPlaced = false;
+            SetCueVisibility(0);
+
+            if (showCalibrationProgress)
+            {
+                Debug.Log("[AdaptiveCueing] Ground calibration started. Look at the ground to calibrate.");
+            }
+        }
+
+        public void ForceDeployNow()
+        {
+            if (groundSamples.Count >= minimumSamplesRequired)
+            {
+                FinalizeCalibrationAndDeploy();
+            }
+            else
+            {
+                Debug.LogWarning($"[AdaptiveCueing] Cannot deploy yet. Need at least {minimumSamplesRequired} ground samples, have {groundSamples.Count}. Keep looking at the ground.");
+            }
+        }
+
+        private void UpdateCalibration()
+        {
+            Transform anchor = ResolveCueAnchor();
+            if (anchor == null) return;
+
+            if (Time.time - lastSampleTime >= sampleInterval)
+            {
+                TryCollectGroundSample(anchor);
+                lastSampleTime = Time.time;
+            }
+
+            float elapsed = Time.time - calibrationStartTime;
+            bool hasEnoughSamples = groundSamples.Count >= minimumSamplesRequired;
+
+            if (elapsed >= calibrationDuration && hasEnoughSamples)
+            {
+                FinalizeCalibrationAndDeploy();
+            }
+
+            if (showCalibrationProgress && Time.frameCount % 60 == 0)
+            {
+                string status = hasEnoughSamples ? "Ready to deploy!" : "Look at the ground...";
+                Debug.Log($"[AdaptiveCueing] Calibrating... {CalibrationProgress * 100f:F0}% | Samples: {groundSamples.Count} | {status}");
+            }
+        }
+
+        private void TryCollectGroundSample(Transform anchor)
+        {
+            Vector3 rayOrigin = anchor.position;
+            Vector3 rayDirection = anchor.forward;
+
+            if (Physics.Raycast(rayOrigin, rayDirection, out RaycastHit hit, groundProbeDistance, groundLayers, QueryTriggerInteraction.Ignore))
+            {
+                float hitHeightBelowHead = anchor.position.y - hit.point.y;
+                if (hitHeightBelowHead > 0.3f)
+                {
+                    groundSamples.Add(hit.point.y);
+
+                    if (showCalibrationProgress && groundSamples.Count <= 5)
+                    {
+                        Debug.Log($"[AdaptiveCueing] Ground sample collected at Y={hit.point.y:F2}");
+                    }
+                }
+            }
+            else
+            {
+                Vector3 downRayOrigin = anchor.position;
+                if (Physics.Raycast(downRayOrigin, Vector3.down, out RaycastHit downHit, groundProbeDistance, groundLayers, QueryTriggerInteraction.Ignore))
+                {
+                    groundSamples.Add(downHit.point.y);
+                }
+            }
+        }
+
+        private void FinalizeCalibrationAndDeploy()
+        {
+            Transform anchor = ResolveCueAnchor();
+            if (anchor == null)
+            {
+                Debug.LogError("[AdaptiveCueing] No camera/anchor found. Cannot deploy cues.");
+                return;
+            }
+
+            if (groundSamples.Count == 0)
+            {
+                Debug.LogError("[AdaptiveCueing] No ground samples collected. Make sure there's a plane with a collider and look at the ground.");
+                return;
+            }
+
+            groundSamples.Sort();
+            int medianIndex = groundSamples.Count / 2;
+            calibratedGroundHeight = groundSamples[medianIndex];
+
+            deploymentOrigin = new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z);
+            deploymentForward = Vector3.ProjectOnPlane(anchor.forward, Vector3.up).normalized;
+            if (deploymentForward.sqrMagnitude < 0.001f)
+            {
+                deploymentForward = Vector3.forward;
+            }
+
+            calibrationState = GroundCalibrationState.Deployed;
+            cuesPlaced = false;
+
+            Debug.Log($"[AdaptiveCueing] Calibration complete! Ground height: {calibratedGroundHeight:F2}m from {groundSamples.Count} samples.");
+        }
+
+        public void ResetCuePlacement()
+        {
+            cuesPlaced = false;
+            foreach (var cue in cueVisuals)
+            {
+                cue.Initialized = false;
+            }
         }
 
         public void RenderCueState(CueState cueState, float currentTime, float deltaTime)
         {
             LatestCueState = cueState;
 
+            if (calibrationState != GroundCalibrationState.Deployed)
+            {
+                SetCueVisibility(0);
+                return;
+            }
+
             if (!cueState.IsValid)
             {
                 SetCueVisibility(0);
+                cuesPlaced = false;
                 return;
             }
 
@@ -58,26 +225,32 @@ namespace AdaptiveCueing
             if (anchor == null)
             {
                 SetCueVisibility(0);
+                cuesPlaced = false;
                 return;
             }
 
             EnsureCueCount(Mathf.Max(1, cueState.CueCount));
 
-            GroundPose baseGroundPose = ResolveGroundPose(anchor.position);
-            Vector3 flatForward = Vector3.ProjectOnPlane(anchor.forward, baseGroundPose.Normal);
+            GroundPose baseGroundPose = new GroundPose(
+                new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z),
+                Vector3.up);
 
-            if (flatForward.sqrMagnitude < 0.0001f)
+            Vector3 right = Vector3.Cross(Vector3.up, deploymentForward).normalized;
+
+            RenderWorldLockedCues(cueState, currentTime, anchor.position, baseGroundPose, deploymentForward, right);
+        }
+
+        private void RenderWorldLockedCues(CueState cueState, float currentTime, Vector3 anchorPosition,
+            GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
+        {
+            if (!cuesPlaced)
             {
-                flatForward = lastForward;
-            }
-            else
-            {
-                flatForward.Normalize();
-                lastForward = flatForward;
+                PlaceAllCuesAhead(cueState, baseGroundPose, flatForward, right);
+                lastPlacementForward = flatForward;
+                cuesPlaced = true;
             }
 
-            Vector3 right = Vector3.Cross(baseGroundPose.Normal, flatForward).normalized;
-            float followAlpha = 1f - Mathf.Exp(-transformSmoothing * Mathf.Max(deltaTime, 0.0001f));
+            Vector3 userGroundPos = new Vector3(anchorPosition.x, baseGroundPose.Position.y, anchorPosition.z);
 
             for (int index = 0; index < cueVisuals.Count; index++)
             {
@@ -90,28 +263,17 @@ namespace AdaptiveCueing
                     continue;
                 }
 
-                float side = alternateFeet ? (index % 2 == 0 ? -1f : 1f) : 0f;
-                float forwardDistance = cueState.DistanceAhead + (cueState.Spacing * index);
+                Vector3 cueGroundPos = new Vector3(
+                    cueVisual.Transform.position.x,
+                    baseGroundPose.Position.y,
+                    cueVisual.Transform.position.z);
 
-                Vector3 targetPosition = baseGroundPose.Position
-                    + (flatForward * forwardDistance)
-                    + (right * side * cueState.LateralOffset);
+                Vector3 toCue = cueGroundPos - userGroundPos;
+                float distanceAlongForward = Vector3.Dot(toCue, flatForward);
 
-                GroundPose groundedCuePose = RefineGroundPose(targetPosition, baseGroundPose);
-                targetPosition = groundedCuePose.Position + (groundedCuePose.Normal * hoverHeight);
-
-                Quaternion targetRotation = Quaternion.LookRotation(flatForward, groundedCuePose.Normal);
-
-                if (!cueVisual.Initialized)
+                if (distanceAlongForward < -recycleDistanceBehind)
                 {
-                    cueVisual.Transform.position = targetPosition;
-                    cueVisual.Transform.rotation = targetRotation;
-                    cueVisual.Initialized = true;
-                }
-                else
-                {
-                    cueVisual.Transform.position = Vector3.Lerp(cueVisual.Transform.position, targetPosition, followAlpha);
-                    cueVisual.Transform.rotation = Quaternion.Slerp(cueVisual.Transform.rotation, targetRotation, followAlpha);
+                    RecycleCueToFront(cueVisual, index, cueState, baseGroundPose, flatForward, right);
                 }
 
                 cueVisual.Transform.localScale = new Vector3(cueScale.x, cueScale.y, Mathf.Max(cueScale.z, cueState.Spacing * 0.55f));
@@ -119,6 +281,72 @@ namespace AdaptiveCueing
                 float pulse = 1f + (pulseDepth * Mathf.Sin((currentTime + (index * 0.12f)) * cueState.PulseRate * Mathf.PI * 2f));
                 UpdateCueVisual(cueVisual, cueState, pulse);
             }
+        }
+
+        private void PlaceAllCuesAhead(CueState cueState, GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
+        {
+            for (int index = 0; index < cueVisuals.Count; index++)
+            {
+                CueVisual cueVisual = cueVisuals[index];
+
+                if (index >= cueState.CueCount)
+                {
+                    cueVisual.Root.SetActive(false);
+                    continue;
+                }
+
+                PlaceCueAtIndex(cueVisual, index, cueState, baseGroundPose, flatForward, right);
+                cueVisual.Root.SetActive(true);
+            }
+        }
+
+        private void PlaceCueAtIndex(CueVisual cueVisual, int index, CueState cueState,
+            GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
+        {
+            float side = alternateFeet ? (index % 2 == 0 ? -1f : 1f) : 0f;
+            float forwardDistance = cueState.DistanceAhead + (cueState.Spacing * index);
+
+            Vector3 targetPosition = deploymentOrigin
+                + (flatForward * forwardDistance)
+                + (right * side * cueState.LateralOffset)
+                + (Vector3.up * hoverHeight);
+
+            Quaternion targetRotation = Quaternion.LookRotation(flatForward, Vector3.up);
+
+            cueVisual.Transform.position = targetPosition;
+            cueVisual.Transform.rotation = targetRotation;
+            cueVisual.WorldPosition = targetPosition;
+            cueVisual.Initialized = true;
+        }
+
+        private void RecycleCueToFront(CueVisual cueVisual, int cueIndex, CueState cueState,
+            GroundPose baseGroundPose, Vector3 flatForward, Vector3 right)
+        {
+            float maxDistance = 0f;
+            for (int i = 0; i < cueVisuals.Count && i < cueState.CueCount; i++)
+            {
+                Vector3 cuePos = cueVisuals[i].Transform.position;
+                Vector3 toOtherCue = cuePos - deploymentOrigin;
+                float dist = Vector3.Dot(toOtherCue, flatForward);
+                if (dist > maxDistance)
+                {
+                    maxDistance = dist;
+                }
+            }
+
+            float side = alternateFeet ? (cueIndex % 2 == 0 ? -1f : 1f) : 0f;
+            float newForwardDistance = maxDistance + cueState.Spacing;
+
+            Vector3 targetPosition = deploymentOrigin
+                + (flatForward * newForwardDistance)
+                + (right * side * cueState.LateralOffset)
+                + (Vector3.up * hoverHeight);
+
+            Quaternion targetRotation = Quaternion.LookRotation(flatForward, Vector3.up);
+
+            cueVisual.Transform.position = targetPosition;
+            cueVisual.Transform.rotation = targetRotation;
+            cueVisual.WorldPosition = targetPosition;
         }
 
         private Transform ResolveCueAnchor()
@@ -254,48 +482,6 @@ namespace AdaptiveCueing
             }
         }
 
-        private GroundPose ResolveGroundPose(Vector3 origin)
-        {
-            if (usePhysicsGrounding)
-            {
-                Vector3 probeOrigin = origin + (Vector3.up * groundProbeHeight);
-
-                if (Physics.Raycast(
-                    probeOrigin,
-                    Vector3.down,
-                    out RaycastHit hit,
-                    groundProbeHeight + groundProbeDistance,
-                    groundLayers,
-                    QueryTriggerInteraction.Ignore))
-                {
-                    return new GroundPose(hit.point, hit.normal);
-                }
-            }
-
-            return new GroundPose(new Vector3(origin.x, groundHeight, origin.z), Vector3.up);
-        }
-
-        private GroundPose RefineGroundPose(Vector3 targetPosition, GroundPose fallback)
-        {
-            if (usePhysicsGrounding)
-            {
-                Vector3 probeOrigin = targetPosition + (fallback.Normal * groundProbeHeight);
-
-                if (Physics.Raycast(
-                    probeOrigin,
-                    -fallback.Normal,
-                    out RaycastHit hit,
-                    groundProbeHeight + groundProbeDistance,
-                    groundLayers,
-                    QueryTriggerInteraction.Ignore))
-                {
-                    return new GroundPose(hit.point, hit.normal);
-                }
-            }
-
-            return new GroundPose(new Vector3(targetPosition.x, fallback.Position.y, targetPosition.z), fallback.Normal);
-        }
-
         private void SetCueVisibility(int visibleCount)
         {
             for (int index = 0; index < cueVisuals.Count; index++)
@@ -310,6 +496,7 @@ namespace AdaptiveCueing
             public Transform Transform;
             public Renderer[] Renderers;
             public bool Initialized;
+            public Vector3 WorldPosition;
         }
 
         private readonly struct GroundPose
