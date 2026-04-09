@@ -1,6 +1,10 @@
 {
   "name": "AdaptiveCueing.Runtime",
-  "references": [],
+  "references": [
+    "Unity.InputSystem",
+    "Unity.XR.OpenXR",
+    "MagicLeap.SDK"
+  ],
   "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
