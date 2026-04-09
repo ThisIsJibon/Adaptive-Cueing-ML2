@@ -8,6 +8,7 @@ namespace AdaptiveCueing
     {
         [Header("References")]
         [SerializeField] private ARRenderer arRenderer;
+        [SerializeField] private MLSpaceGroundDetector groundDetector;
 
         [Header("Magic Leap Controller Input")]
         [SerializeField] private InputActionReference triggerAction;
@@ -52,6 +53,11 @@ namespace AdaptiveCueing
                 arRenderer = FindObjectOfType<ARRenderer>();
             }
 
+            if (groundDetector == null)
+            {
+                groundDetector = FindObjectOfType<MLSpaceGroundDetector>();
+            }
+
             if (arRenderer == null)
             {
                 Debug.LogError("[CueControllerInput] No ARRenderer found in scene!");
@@ -64,7 +70,7 @@ namespace AdaptiveCueing
             {
                 if (Keyboard.current[placeCueKey].wasPressedThisFrame)
                 {
-                    PlaceNextCue();
+                    HandleTriggerPress();
                 }
 
                 if (Keyboard.current[clearCuesKey].wasPressedThisFrame)
@@ -76,6 +82,18 @@ namespace AdaptiveCueing
 
         private void OnControllerButtonPressed(InputAction.CallbackContext context)
         {
+            HandleTriggerPress();
+        }
+
+        private void HandleTriggerPress()
+        {
+            // First trigger press sets ground level, subsequent presses place cues
+            if (groundDetector != null && groundDetector.IsWaitingForGroundLook)
+            {
+                groundDetector.TrySetGroundFromCrosshair();
+                return;
+            }
+
             PlaceNextCue();
         }
 
@@ -89,7 +107,7 @@ namespace AdaptiveCueing
 
             if (!arRenderer.IsReadyToPlaceCues)
             {
-                Debug.Log("[CueControllerInput] Calibration not complete yet. Keep looking at the ground.");
+                Debug.Log("[CueControllerInput] Ground not set. Look at the ground and press trigger first.");
                 return;
             }
 

@@ -13,30 +13,41 @@ namespace AdaptiveCueing
         Failed
     }
 
+    public enum GroundDetectionState
+    {
+        WaitingForSpace,
+        WaitingForGroundLook,
+        GroundSet
+    }
+
     [DisallowMultipleComponent]
     public class MLSpaceGroundDetector : MonoBehaviour
     {
         [Header("References")]
         [SerializeField] private ARRenderer arRenderer;
 
-        [Header("Ground Settings")]
-        [Tooltip("Estimated user height in meters (used to calculate floor from head position)")]
-        [SerializeField] private float estimatedUserHeight = 1.65f;
-        [SerializeField] private bool autoSetGroundOnLocalized = true;
+        [Header("Ground Detection")]
+        [Tooltip("How far to project your gaze to determine ground level")]
+        [SerializeField] private float gazeDistance = 3f;
 
-        [Header("Fallback Settings")]
-        [Tooltip("Seconds to wait for Space localization before allowing manual calibration fallback")]
+        [Header("Localization")]
+        [Tooltip("Seconds to wait for Space localization before timeout")]
         [SerializeField] private float localizationTimeout = 10f;
 
         private MagicLeapLocalizationMapFeature localizationMapFeature;
         private SpaceLocalizationStatus status = SpaceLocalizationStatus.NotInitialized;
+        private GroundDetectionState groundState = GroundDetectionState.WaitingForSpace;
         private string localizedSpaceName = "";
         private float initTime;
         private bool timedOut;
+        private Camera mainCamera;
 
         public SpaceLocalizationStatus Status => status;
+        public GroundDetectionState GroundState => groundState;
         public string LocalizedSpaceName => localizedSpaceName;
         public bool IsLocalized => status == SpaceLocalizationStatus.Localized;
+        public bool IsWaitingForGroundLook => groundState == GroundDetectionState.WaitingForGroundLook;
+        public bool IsGroundSet => groundState == GroundDetectionState.GroundSet;
         public bool HasTimedOut => timedOut;
 
         private void Awake()
@@ -48,14 +59,13 @@ namespace AdaptiveCueing
         {
             Debug.Log("[MLSpace] MLSpaceGroundDetector Start - Initializing...");
             initTime = Time.time;
+            mainCamera = Camera.main;
 
             if (arRenderer == null)
             {
                 arRenderer = FindObjectOfType<ARRenderer>();
                 if (arRenderer != null)
-                {
-                    Debug.Log("[MLSpace] Found ARRenderer automatically.");
-                }
+                    Debug.Log("[MLSpace] Found ARRenderer.");
             }
 
             InitializeLocalizationFeature();
@@ -68,9 +78,48 @@ namespace AdaptiveCueing
                 if (Time.time - initTime > localizationTimeout)
                 {
                     timedOut = true;
-                    Debug.LogWarning($"[MLSpace] Localization timeout ({localizationTimeout}s). Fallback to manual calibration is now allowed.");
+                    Debug.LogWarning($"[MLSpace] Localization timeout ({localizationTimeout}s).");
                 }
             }
+        }
+
+        public bool TrySetGroundFromCrosshair()
+        {
+            if (groundState != GroundDetectionState.WaitingForGroundLook)
+            {
+                if (groundState == GroundDetectionState.GroundSet)
+                    Debug.Log("[MLSpace] Ground already set.");
+                return false;
+            }
+
+            if (mainCamera == null)
+            {
+                mainCamera = Camera.main;
+                if (mainCamera == null)
+                {
+                    Debug.LogError("[MLSpace] No camera found!");
+                    return false;
+                }
+            }
+
+            // Calculate the point where you're looking at gazeDistance meters away
+            Vector3 gazePoint = mainCamera.transform.position + mainCamera.transform.forward * gazeDistance;
+            float groundY = gazePoint.y;
+
+            Debug.Log($"[MLSpace] Camera pos: {mainCamera.transform.position}");
+            Debug.Log($"[MLSpace] Looking direction: {mainCamera.transform.forward}");
+            Debug.Log($"[MLSpace] Gaze point ({gazeDistance}m away): {gazePoint}");
+            Debug.Log($"[MLSpace] === GROUND Y = {groundY:F2}m ===");
+
+            groundState = GroundDetectionState.GroundSet;
+
+            if (arRenderer != null)
+            {
+                arRenderer.SetGroundHeightFromPlaneDetection(groundY);
+                Debug.Log("[MLSpace] Ground set! Press trigger to place cues.");
+            }
+
+            return true;
         }
 
         private void InitializeLocalizationFeature()
@@ -132,12 +181,13 @@ namespace AdaptiveCueing
                 case LocalizationMapState.Localized:
                     localizedSpaceName = data.Map.Name;
                     status = SpaceLocalizationStatus.Localized;
+                    groundState = GroundDetectionState.WaitingForGroundLook;
+                    
                     Debug.Log($"[MLSpace] === LOCALIZED to Space: \"{localizedSpaceName}\" (Confidence: {data.Confidence}) ===");
-
-                    if (autoSetGroundOnLocalized)
-                    {
-                        SetGroundFromSpaceOrigin();
-                    }
+                    Debug.Log("[MLSpace] ========================================");
+                    Debug.Log("[MLSpace] LOOK AT THE GROUND");
+                    Debug.Log("[MLSpace] Press TRIGGER to set ground level");
+                    Debug.Log("[MLSpace] ========================================");
                     break;
 
                 case LocalizationMapState.LocalizationPending:
@@ -154,41 +204,6 @@ namespace AdaptiveCueing
                     localizedSpaceName = "";
                     Debug.Log("[MLSpace] Not localized to any Space.");
                     break;
-            }
-        }
-
-        public void SetGroundFromSpaceOrigin()
-        {
-            if (localizationMapFeature == null)
-            {
-                Debug.LogError("[MLSpace] Localization feature not available.");
-                return;
-            }
-
-            Camera mainCam = Camera.main;
-            if (mainCam == null)
-            {
-                Debug.LogError("[MLSpace] No main camera found to estimate ground height.");
-                return;
-            }
-
-            float headHeight = mainCam.transform.position.y;
-            float groundHeight = headHeight - estimatedUserHeight;
-
-            Pose mapOrigin = localizationMapFeature.GetMapOrigin();
-            Debug.Log($"[MLSpace] Space origin: {mapOrigin.position}");
-            Debug.Log($"[MLSpace] Head position Y: {headHeight:F3}m");
-            Debug.Log($"[MLSpace] Estimated user height: {estimatedUserHeight:F2}m");
-            Debug.Log($"[MLSpace] === GROUND SET to Y={groundHeight:F3}m ===");
-            Debug.Log($"[MLSpace] Ready to place cues with trigger!");
-
-            if (arRenderer != null)
-            {
-                arRenderer.SetGroundHeightFromPlaneDetection(groundHeight);
-            }
-            else
-            {
-                Debug.LogWarning("[MLSpace] No ARRenderer found to set ground height.");
             }
         }
     }
