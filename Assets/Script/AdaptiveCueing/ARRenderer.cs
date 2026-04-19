@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
 
 namespace AdaptiveCueing
 {
@@ -25,19 +27,28 @@ namespace AdaptiveCueing
         [SerializeField, Min(3)] private int minimumSamplesRequired = 10;
         [SerializeField] private bool showCalibrationProgress = true;
         [SerializeField] private bool waitForMLSpaces = true;
+        [SerializeField, Min(1f)] private float fallbackStandingHeight = 1.6f;
 
         [Header("ML Space Detection")]
         [SerializeField] private MLSpaceGroundDetector mlSpaceDetector;
 
         [Header("Cue Appearance")]
-        [SerializeField] private Vector3 cueScale = new Vector3(0.18f, 0.02f, 0.28f);
+        [SerializeField] private CuePresetId defaultCuePreset = CuePresetId.SteppingStones2D;
         [SerializeField, Min(0f)] private float hoverHeight = 0.015f;
         [SerializeField, Range(0f, 0.5f)] private float pulseDepth = 0f;
         [SerializeField] private bool alternateFeet = true;
 
+        [Header("Ground Snapping")]
+        [SerializeField] private bool snapPlacedCuesToPlanes = true;
+        [SerializeField, Min(0.05f)] private float cueGroundSnapStartHeight = 0.45f;
+        [SerializeField, Min(0.2f)] private float cueGroundSnapDistance = 2.5f;
+        [SerializeField, Range(0.5f, 1f)] private float floorNormalThreshold = 0.8f;
+
         [Header("World Locking")]
         [SerializeField] private bool autoRecycleCues = false;
         [SerializeField, Min(0.1f)] private float recycleDistanceBehind = 0.3f;
+
+        private static readonly List<ARRaycastHit> GroundRaycastHits = new List<ARRaycastHit>();
 
         private readonly List<CueVisual> cueVisuals = new List<CueVisual>();
         private readonly List<Renderer> rendererBuffer = new List<Renderer>();
@@ -45,22 +56,29 @@ namespace AdaptiveCueing
 
         private Material runtimeCueMaterial;
         private MaterialPropertyBlock propertyBlock;
+        private CuePresetDefinition activeCuePreset;
 
         private GroundCalibrationState calibrationState = GroundCalibrationState.Calibrating;
         private float calibrationStartTime;
         private float lastSampleTime;
         private float calibratedGroundHeight;
+        private Vector3 calibratedGroundPoint;
+        private Vector3 calibratedGroundNormal = Vector3.up;
+        private float estimatedUserHeight;
         private Vector3 deploymentOrigin;
         private Vector3 deploymentForward;
         private int placedCueCount;
         private bool waitingForMLSpace = true;
         private bool manualCalibrationStarted;
-        
+
         // Captured at first cue placement to ensure consistent spacing
         private float capturedSpacing;
         private float capturedDistanceAhead;
         private float capturedLateralOffset;
         private int capturedCueCount;
+
+        private ARRaycastManager raycastManager;
+        private ARPlaneManager planeManager;
 
         public CueState LatestCueState { get; private set; }
         public GroundCalibrationState CalibrationState => calibrationState;
@@ -69,15 +87,21 @@ namespace AdaptiveCueing
         public float CalibratedGroundHeight => calibratedGroundHeight;
         public int PlacedCueCount => placedCueCount;
         public bool IsReadyToPlaceCues => calibrationState == GroundCalibrationState.Deployed;
+        public CuePresetId SelectedCuePreset => activeCuePreset.Id;
 
         private void Awake()
         {
             propertyBlock = new MaterialPropertyBlock();
+            activeCuePreset = CuePresetLibrary.Get(defaultCuePreset);
             ResolveCueAnchor();
+            ResolveGroundManagers();
+            estimatedUserHeight = fallbackStandingHeight;
         }
 
         private void OnEnable()
         {
+            ResolveGroundManagers();
+
             if (mlSpaceDetector == null)
             {
                 mlSpaceDetector = FindObjectOfType<MLSpaceGroundDetector>();
@@ -100,7 +124,6 @@ namespace AdaptiveCueing
         {
             if (waitingForMLSpace && mlSpaceDetector != null)
             {
-                // Wait for ML Space to set ground via trigger press
                 if (mlSpaceDetector.IsGroundSet)
                 {
                     waitingForMLSpace = false;
@@ -125,6 +148,12 @@ namespace AdaptiveCueing
         public void SetAnchor(Transform anchor)
         {
             cueAnchor = anchor;
+        }
+
+        public void SetCuePreset(CuePresetId presetId)
+        {
+            activeCuePreset = CuePresetLibrary.Get(presetId);
+            ResetCuePlacement();
         }
 
         public void StartCalibration()
@@ -170,39 +199,9 @@ namespace AdaptiveCueing
                 return false;
             }
 
-            // On first cue, capture spacing values so they stay consistent
             if (placedCueCount == 0)
             {
-                if (LatestCueState.IsValid)
-                {
-                    capturedSpacing = LatestCueState.Spacing;
-                    capturedDistanceAhead = LatestCueState.DistanceAhead;
-                    capturedLateralOffset = LatestCueState.LateralOffset;
-                    capturedCueCount = LatestCueState.CueCount;
-                }
-                else
-                {
-                    // Use sensible defaults if no valid state
-                    capturedSpacing = 0.6f;
-                    capturedDistanceAhead = 0.5f;
-                    capturedLateralOffset = 0.15f;
-                    capturedCueCount = 8;
-                }
-
-                Vector3 flatForward = Vector3.ProjectOnPlane(anchor.forward, Vector3.up).normalized;
-                if (flatForward.sqrMagnitude < 0.001f)
-                {
-                    flatForward = Vector3.forward;
-                }
-                deploymentForward = flatForward;
-                deploymentOrigin = new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z);
-                
-                Debug.Log($"[AdaptiveCueing] Starting cue placement:");
-                Debug.Log($"[AdaptiveCueing]   Head position: {anchor.position}");
-                Debug.Log($"[AdaptiveCueing]   Calibrated ground Y: {calibratedGroundHeight:F3}m");
-                Debug.Log($"[AdaptiveCueing]   Deployment origin: {deploymentOrigin}");
-                Debug.Log($"[AdaptiveCueing]   Direction: {deploymentForward}");
-                Debug.Log($"[AdaptiveCueing]   Spacing: {capturedSpacing:F2}m, Cue count: {capturedCueCount}");
+                CapturePlacementParameters(anchor);
             }
 
             if (placedCueCount >= capturedCueCount)
@@ -214,62 +213,100 @@ namespace AdaptiveCueing
             EnsureCueCount(placedCueCount + 1);
 
             CueVisual cueVisual = cueVisuals[placedCueCount];
-            Vector3 right = Vector3.Cross(Vector3.up, deploymentForward).normalized;
+            float lateralOffset = CuePresetLibrary.GetLateralOffset(activeCuePreset, capturedLateralOffset);
+            Vector3 right = ResolveRightVector(deploymentForward, calibratedGroundNormal);
 
-            float side = alternateFeet ? (placedCueCount % 2 == 0 ? -1f : 1f) : 0f;
+            float side = activeCuePreset.AlternateFeet && alternateFeet ? (placedCueCount % 2 == 0 ? -1f : 1f) : 0f;
             float forwardDistance = capturedDistanceAhead + (capturedSpacing * placedCueCount);
-
-            Vector3 targetPosition = deploymentOrigin
+            Vector3 targetGroundPoint = deploymentOrigin
                 + (deploymentForward * forwardDistance)
-                + (right * side * capturedLateralOffset)
-                + (Vector3.up * hoverHeight);
+                + (right * side * lateralOffset);
 
-            Quaternion targetRotation = Quaternion.LookRotation(deploymentForward, Vector3.up);
+            GroundPoseEstimate groundPose = ResolveGroundPoseForCue(targetGroundPoint);
+            Vector3 cueForward = ResolveProjectedForward(deploymentForward, groundPose.Normal);
+            Vector3 cueScale = CuePresetLibrary.GetCueScale(activeCuePreset, capturedSpacing);
+            Vector3 targetPosition = groundPose.Position + (groundPose.Normal * CuePresetLibrary.GetVerticalOffset(activeCuePreset, hoverHeight));
+            Quaternion targetRotation = Quaternion.LookRotation(cueForward, groundPose.Normal);
 
             cueVisual.Transform.position = targetPosition;
             cueVisual.Transform.rotation = targetRotation;
-            cueVisual.Transform.localScale = new Vector3(cueScale.x, cueScale.y, Mathf.Max(cueScale.z, capturedSpacing * 0.55f));
+            cueVisual.Transform.localScale = cueScale;
             cueVisual.WorldPosition = targetPosition;
+            cueVisual.BaseColor = CuePresetLibrary.GetCueColor(activeCuePreset, placedCueCount);
             cueVisual.Initialized = true;
             cueVisual.Root.SetActive(true);
 
             placedCueCount++;
 
-            Debug.Log($"[AdaptiveCueing] Placed cue {placedCueCount}/{capturedCueCount} at position: {targetPosition} (spacing: {capturedSpacing:F2}m)");
+            Debug.Log($"[AdaptiveCueing] Placed cue {placedCueCount}/{capturedCueCount} at position: {targetPosition} with preset {activeCuePreset.DisplayName}");
             return true;
         }
 
         public void ClearAllCues()
         {
             placedCueCount = 0;
-            capturedSpacing = 0;
-            capturedDistanceAhead = 0;
-            capturedLateralOffset = 0;
+            capturedSpacing = 0f;
+            capturedDistanceAhead = 0f;
+            capturedLateralOffset = 0f;
             capturedCueCount = 0;
             SetCueVisibility(0);
-            Debug.Log("[AdaptiveCueing] All cues cleared. Next placement will use new head pose and spacing.");
+
+            foreach (CueVisual cue in cueVisuals)
+            {
+                cue.Initialized = false;
+            }
+
+            Debug.Log("[AdaptiveCueing] All cues cleared. Next placement will use new head pose and preset.");
         }
 
         public void SetGroundHeightFromPlaneDetection(float groundHeight)
         {
-            calibratedGroundHeight = groundHeight;
+            Transform anchor = ResolveCueAnchor();
+            Vector3 groundPoint = anchor != null
+                ? new Vector3(anchor.position.x, groundHeight, anchor.position.z)
+                : new Vector3(0f, groundHeight, 0f);
+
+            SetGroundPose(new GroundPoseEstimate
+            {
+                IsValid = true,
+                Position = groundPoint,
+                Normal = Vector3.up,
+                EstimatedUserHeight = anchor != null ? Mathf.Max(1f, anchor.position.y - groundHeight) : fallbackStandingHeight,
+                Source = GroundPoseSource.LocalizedPlaneRaycast,
+                SampleCount = 1,
+                Confidence = 0.8f
+            });
+        }
+
+        public void SetGroundPose(GroundPoseEstimate groundPoseEstimate)
+        {
+            if (!groundPoseEstimate.IsValid)
+            {
+                Debug.LogWarning("[AdaptiveCueing] Ignoring invalid ground pose.");
+                return;
+            }
+
+            calibratedGroundPoint = groundPoseEstimate.Position;
+            calibratedGroundNormal = groundPoseEstimate.Normal.sqrMagnitude > 0.0001f
+                ? groundPoseEstimate.Normal.normalized
+                : Vector3.up;
+            calibratedGroundHeight = calibratedGroundPoint.y;
+            estimatedUserHeight = groundPoseEstimate.EstimatedUserHeight > 0.1f
+                ? groundPoseEstimate.EstimatedUserHeight
+                : fallbackStandingHeight;
             calibrationState = GroundCalibrationState.Deployed;
-            placedCueCount = 0;
             waitingForMLSpace = false;
             manualCalibrationStarted = false;
+            ClearAllCues();
 
             Transform anchor = ResolveCueAnchor();
             if (anchor != null)
             {
-                deploymentOrigin = new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z);
-                deploymentForward = Vector3.ProjectOnPlane(anchor.forward, Vector3.up).normalized;
-                if (deploymentForward.sqrMagnitude < 0.001f)
-                {
-                    deploymentForward = Vector3.forward;
-                }
+                deploymentOrigin = ProjectPointOntoPlane(anchor.position, calibratedGroundPoint, calibratedGroundNormal);
+                deploymentForward = ResolveProjectedForward(anchor.forward, calibratedGroundNormal);
             }
 
-            Debug.Log($"[AdaptiveCueing] === GROUND SET from ML Space: Y={groundHeight:F2}m === Press trigger to place cues!");
+            Debug.Log($"[AdaptiveCueing] === GROUND SET === Y={calibratedGroundHeight:F2}m | Normal={calibratedGroundNormal} | User height={estimatedUserHeight:F2}m");
         }
 
         public void SkipCalibration()
@@ -280,10 +317,67 @@ namespace AdaptiveCueing
             }
         }
 
+        public void ResetCuePlacement()
+        {
+            ClearAllCues();
+        }
+
+        public void RenderCueState(CueState cueState, float currentTime, float deltaTime)
+        {
+            LatestCueState = cueState;
+
+            if (calibrationState != GroundCalibrationState.Deployed)
+            {
+                return;
+            }
+
+            if (!cueState.IsValid)
+            {
+                return;
+            }
+
+            Transform anchor = ResolveCueAnchor();
+            if (anchor == null)
+            {
+                return;
+            }
+
+            UpdatePlacedCuesVisuals(cueState, currentTime, anchor.position);
+        }
+
+        private void CapturePlacementParameters(Transform anchor)
+        {
+            if (LatestCueState.IsValid)
+            {
+                capturedSpacing = LatestCueState.Spacing;
+                capturedDistanceAhead = LatestCueState.DistanceAhead;
+                capturedLateralOffset = LatestCueState.LateralOffset;
+                capturedCueCount = LatestCueState.CueCount;
+            }
+            else
+            {
+                capturedSpacing = 0.6f;
+                capturedDistanceAhead = 0.5f;
+                capturedLateralOffset = 0.15f;
+                capturedCueCount = 8;
+            }
+
+            deploymentOrigin = ProjectPointOntoPlane(anchor.position, calibratedGroundPoint, calibratedGroundNormal);
+            deploymentForward = ResolveProjectedForward(anchor.forward, calibratedGroundNormal);
+            estimatedUserHeight = Mathf.Clamp(Vector3.Distance(anchor.position, deploymentOrigin), 1f, 2.25f);
+
+            Debug.Log($"[AdaptiveCueing] Starting cue placement from {deploymentOrigin} using {activeCuePreset.DisplayName}.");
+            Debug.Log($"[AdaptiveCueing] Ground point: {calibratedGroundPoint} | Ground normal: {calibratedGroundNormal}");
+            Debug.Log($"[AdaptiveCueing] Captured spacing {capturedSpacing:F2}m, count {capturedCueCount}, estimated user height {estimatedUserHeight:F2}m");
+        }
+
         private void UpdateCalibration()
         {
             Transform anchor = ResolveCueAnchor();
-            if (anchor == null) return;
+            if (anchor == null)
+            {
+                return;
+            }
 
             if (Time.time - lastSampleTime >= sampleInterval)
             {
@@ -324,13 +418,9 @@ namespace AdaptiveCueing
                     }
                 }
             }
-            else
+            else if (Physics.Raycast(anchor.position, Vector3.down, out RaycastHit downHit, groundProbeDistance, groundLayers, QueryTriggerInteraction.Ignore))
             {
-                Vector3 downRayOrigin = anchor.position;
-                if (Physics.Raycast(downRayOrigin, Vector3.down, out RaycastHit downHit, groundProbeDistance, groundLayers, QueryTriggerInteraction.Ignore))
-                {
-                    groundSamples.Add(downHit.point.y);
-                }
+                groundSamples.Add(downHit.point.y);
             }
         }
 
@@ -343,6 +433,8 @@ namespace AdaptiveCueing
                 return;
             }
 
+            calibratedGroundNormal = Vector3.up;
+
             if (groundSamples.Count > 0)
             {
                 groundSamples.Sort();
@@ -352,17 +444,14 @@ namespace AdaptiveCueing
             }
             else
             {
-                // Fallback: estimate ground from head height (assume 1.6m standing height)
-                calibratedGroundHeight = anchor.position.y - 1.6f;
-                Debug.LogWarning($"[AdaptiveCueing] No raycast hits. Using estimated ground (head height - 1.6m).");
+                calibratedGroundHeight = anchor.position.y - fallbackStandingHeight;
+                Debug.LogWarning($"[AdaptiveCueing] No raycast hits. Using estimated ground (head height - {fallbackStandingHeight:F1}m).");
             }
 
-            deploymentOrigin = new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z);
-            deploymentForward = Vector3.ProjectOnPlane(anchor.forward, Vector3.up).normalized;
-            if (deploymentForward.sqrMagnitude < 0.001f)
-            {
-                deploymentForward = Vector3.forward;
-            }
+            calibratedGroundPoint = new Vector3(anchor.position.x, calibratedGroundHeight, anchor.position.z);
+            deploymentOrigin = ProjectPointOntoPlane(anchor.position, calibratedGroundPoint, calibratedGroundNormal);
+            deploymentForward = ResolveProjectedForward(anchor.forward, calibratedGroundNormal);
+            estimatedUserHeight = Mathf.Max(1f, anchor.position.y - calibratedGroundHeight);
 
             calibrationState = GroundCalibrationState.Deployed;
             placedCueCount = 0;
@@ -370,46 +459,9 @@ namespace AdaptiveCueing
             Debug.Log($"[AdaptiveCueing] === CALIBRATION COMPLETE === Ground Y: {calibratedGroundHeight:F2}m. Press trigger to place cues!");
         }
 
-        public void ResetCuePlacement()
-        {
-            placedCueCount = 0;
-            capturedSpacing = 0;
-            capturedDistanceAhead = 0;
-            capturedLateralOffset = 0;
-            capturedCueCount = 0;
-            SetCueVisibility(0);
-            foreach (var cue in cueVisuals)
-            {
-                cue.Initialized = false;
-            }
-        }
-
-        public void RenderCueState(CueState cueState, float currentTime, float deltaTime)
-        {
-            LatestCueState = cueState;
-
-            if (calibrationState != GroundCalibrationState.Deployed)
-            {
-                return;
-            }
-
-            if (!cueState.IsValid)
-            {
-                return;
-            }
-
-            Transform anchor = ResolveCueAnchor();
-            if (anchor == null)
-            {
-                return;
-            }
-
-            UpdatePlacedCuesVisuals(cueState, currentTime, anchor.position);
-        }
-
         private void UpdatePlacedCuesVisuals(CueState cueState, float currentTime, Vector3 anchorPosition)
         {
-            Vector3 right = Vector3.Cross(Vector3.up, deploymentForward).normalized;
+            Vector3 right = ResolveRightVector(deploymentForward, calibratedGroundNormal);
 
             for (int index = 0; index < placedCueCount && index < cueVisuals.Count; index++)
             {
@@ -422,12 +474,8 @@ namespace AdaptiveCueing
 
                 if (autoRecycleCues)
                 {
-                    Vector3 userGroundPos = new Vector3(anchorPosition.x, calibratedGroundHeight, anchorPosition.z);
-                    Vector3 cueGroundPos = new Vector3(
-                        cueVisual.Transform.position.x,
-                        calibratedGroundHeight,
-                        cueVisual.Transform.position.z);
-
+                    Vector3 userGroundPos = ProjectPointOntoPlane(anchorPosition, calibratedGroundPoint, calibratedGroundNormal);
+                    Vector3 cueGroundPos = ProjectPointOntoPlane(cueVisual.Transform.position, calibratedGroundPoint, calibratedGroundNormal);
                     Vector3 toCue = cueGroundPos - userGroundPos;
                     float distanceAlongForward = Vector3.Dot(toCue, deploymentForward);
 
@@ -445,32 +493,36 @@ namespace AdaptiveCueing
         private void RecycleCueToFront(CueVisual cueVisual, int cueIndex, CueState cueState, Vector3 right)
         {
             float maxDistance = 0f;
-            for (int i = 0; i < placedCueCount && i < cueVisuals.Count; i++)
+            for (int index = 0; index < placedCueCount && index < cueVisuals.Count; index++)
             {
-                if (!cueVisuals[i].Root.activeSelf) continue;
-                
-                Vector3 cuePos = cueVisuals[i].Transform.position;
-                Vector3 toOtherCue = cuePos - deploymentOrigin;
-                float dist = Vector3.Dot(toOtherCue, deploymentForward);
-                if (dist > maxDistance)
+                if (!cueVisuals[index].Root.activeSelf)
                 {
-                    maxDistance = dist;
+                    continue;
+                }
+
+                Vector3 cuePos = cueVisuals[index].Transform.position;
+                Vector3 toOtherCue = cuePos - deploymentOrigin;
+                float distance = Vector3.Dot(toOtherCue, deploymentForward);
+                if (distance > maxDistance)
+                {
+                    maxDistance = distance;
                 }
             }
 
-            float side = alternateFeet ? (cueIndex % 2 == 0 ? -1f : 1f) : 0f;
+            float lateralOffset = CuePresetLibrary.GetLateralOffset(activeCuePreset, cueState.LateralOffset);
+            float side = activeCuePreset.AlternateFeet && alternateFeet ? (cueIndex % 2 == 0 ? -1f : 1f) : 0f;
             float newForwardDistance = maxDistance + cueState.Spacing;
-
-            Vector3 targetPosition = deploymentOrigin
+            Vector3 targetGroundPoint = deploymentOrigin
                 + (deploymentForward * newForwardDistance)
-                + (right * side * cueState.LateralOffset)
-                + (Vector3.up * hoverHeight);
+                + (right * side * lateralOffset);
 
-            Quaternion targetRotation = Quaternion.LookRotation(deploymentForward, Vector3.up);
+            GroundPoseEstimate groundPose = ResolveGroundPoseForCue(targetGroundPoint);
+            Vector3 cueForward = ResolveProjectedForward(deploymentForward, groundPose.Normal);
 
-            cueVisual.Transform.position = targetPosition;
-            cueVisual.Transform.rotation = targetRotation;
-            cueVisual.WorldPosition = targetPosition;
+            cueVisual.Transform.position = groundPose.Position + (groundPose.Normal * CuePresetLibrary.GetVerticalOffset(activeCuePreset, hoverHeight));
+            cueVisual.Transform.rotation = Quaternion.LookRotation(cueForward, groundPose.Normal);
+            cueVisual.Transform.localScale = CuePresetLibrary.GetCueScale(activeCuePreset, cueState.Spacing);
+            cueVisual.WorldPosition = cueVisual.Transform.position;
         }
 
         private Transform ResolveCueAnchor()
@@ -499,6 +551,19 @@ namespace AdaptiveCueing
             return cueAnchor;
         }
 
+        private void ResolveGroundManagers()
+        {
+            if (raycastManager == null)
+            {
+                raycastManager = FindObjectOfType<ARRaycastManager>();
+            }
+
+            if (planeManager == null)
+            {
+                planeManager = FindObjectOfType<ARPlaneManager>();
+            }
+        }
+
         private void EnsureCueCount(int desiredCount)
         {
             while (cueVisuals.Count < desiredCount)
@@ -523,14 +588,12 @@ namespace AdaptiveCueing
                 root.transform.SetParent(transform, false);
 
                 Collider collider = root.GetComponent<Collider>();
-
                 if (collider != null)
                 {
                     Destroy(collider);
                 }
 
                 Renderer primitiveRenderer = root.GetComponent<Renderer>();
-
                 if (primitiveRenderer != null)
                 {
                     primitiveRenderer.sharedMaterial = GetOrCreateRuntimeMaterial();
@@ -545,6 +608,7 @@ namespace AdaptiveCueing
                 Root = root,
                 Transform = root.transform,
                 Renderers = rendererBuffer.ToArray(),
+                BaseColor = activeCuePreset.PrimaryColor,
                 Initialized = false
             };
         }
@@ -557,12 +621,10 @@ namespace AdaptiveCueing
             }
 
             Shader shader = Shader.Find("Standard");
-
             if (shader == null)
             {
                 shader = Shader.Find("Universal Render Pipeline/Lit");
             }
-
             if (shader == null)
             {
                 shader = Shader.Find("Sprites/Default");
@@ -581,6 +643,58 @@ namespace AdaptiveCueing
             return runtimeCueMaterial;
         }
 
+        private GroundPoseEstimate ResolveGroundPoseForCue(Vector3 targetGroundPoint)
+        {
+            ResolveGroundManagers();
+
+            if (snapPlacedCuesToPlanes && raycastManager != null)
+            {
+                Vector3 probeOrigin = targetGroundPoint + (calibratedGroundNormal * cueGroundSnapStartHeight);
+                Ray ray = new Ray(probeOrigin, -calibratedGroundNormal);
+
+                if (raycastManager.Raycast(ray, GroundRaycastHits, TrackableType.PlaneWithinPolygon))
+                {
+                    for (int index = 0; index < GroundRaycastHits.Count; index++)
+                    {
+                        ARRaycastHit hit = GroundRaycastHits[index];
+                        if (hit.distance > cueGroundSnapDistance)
+                        {
+                            continue;
+                        }
+
+                        Vector3 hitNormal = hit.pose.up.sqrMagnitude > 0.0001f ? hit.pose.up.normalized : Vector3.up;
+                        if (Vector3.Dot(hitNormal, Vector3.up) < floorNormalThreshold)
+                        {
+                            continue;
+                        }
+
+                        return new GroundPoseEstimate
+                        {
+                            IsValid = true,
+                            Position = hit.pose.position,
+                            Normal = hitNormal,
+                            EstimatedUserHeight = estimatedUserHeight,
+                            Source = GroundPoseSource.LocalizedPlaneRaycast,
+                            SampleCount = 1,
+                            Confidence = 0.85f
+                        };
+                    }
+                }
+            }
+
+            Vector3 fallbackPoint = ProjectPointOntoPlane(targetGroundPoint, calibratedGroundPoint, calibratedGroundNormal);
+            return new GroundPoseEstimate
+            {
+                IsValid = true,
+                Position = fallbackPoint,
+                Normal = calibratedGroundNormal,
+                EstimatedUserHeight = estimatedUserHeight,
+                Source = GroundPoseSource.ManualCalibration,
+                SampleCount = 1,
+                Confidence = 0.55f
+            };
+        }
+
         private void UpdateCueVisual(CueVisual cueVisual, CueState cueState, float pulse)
         {
             if (cueVisual.Renderers == null)
@@ -588,11 +702,13 @@ namespace AdaptiveCueing
                 return;
             }
 
-            Color surfaceColor = cueState.Tint * (cueState.Brightness * pulse);
-            Color emissionColor = cueState.Tint * Mathf.Max(0f, (cueState.Brightness * pulse) - 0.15f);
+            Color baseColor = cueVisual.BaseColor.a > 0f ? cueVisual.BaseColor : activeCuePreset.PrimaryColor;
+            Color surfaceColor = baseColor * (cueState.Brightness * pulse);
+            Color emissionColor = baseColor * Mathf.Max(0f, (cueState.Brightness * pulse) - 0.12f);
 
-            foreach (Renderer rendererComponent in cueVisual.Renderers)
+            for (int index = 0; index < cueVisual.Renderers.Length; index++)
             {
+                Renderer rendererComponent = cueVisual.Renderers[index];
                 if (rendererComponent == null)
                 {
                     continue;
@@ -614,26 +730,53 @@ namespace AdaptiveCueing
             }
         }
 
+        private static Vector3 ProjectPointOntoPlane(Vector3 point, Vector3 planePoint, Vector3 planeNormal)
+        {
+            Vector3 normalizedNormal = planeNormal.sqrMagnitude > 0.0001f ? planeNormal.normalized : Vector3.up;
+            float distance = Vector3.Dot(point - planePoint, normalizedNormal);
+            return point - (normalizedNormal * distance);
+        }
+
+        private static Vector3 ResolveProjectedForward(Vector3 forward, Vector3 normal)
+        {
+            Vector3 projectedForward = Vector3.ProjectOnPlane(forward, normal);
+            if (projectedForward.sqrMagnitude < 0.001f)
+            {
+                projectedForward = Vector3.ProjectOnPlane(Vector3.forward, normal);
+            }
+
+            if (projectedForward.sqrMagnitude < 0.001f)
+            {
+                projectedForward = Vector3.forward;
+            }
+
+            return projectedForward.normalized;
+        }
+
+        private static Vector3 ResolveRightVector(Vector3 forward, Vector3 normal)
+        {
+            Vector3 right = Vector3.Cross(normal, forward);
+            if (right.sqrMagnitude < 0.001f)
+            {
+                right = Vector3.Cross(Vector3.up, forward);
+            }
+
+            if (right.sqrMagnitude < 0.001f)
+            {
+                right = Vector3.right;
+            }
+
+            return right.normalized;
+        }
+
         private sealed class CueVisual
         {
             public GameObject Root;
             public Transform Transform;
             public Renderer[] Renderers;
+            public Color BaseColor;
             public bool Initialized;
             public Vector3 WorldPosition;
-        }
-
-        private readonly struct GroundPose
-        {
-            public GroundPose(Vector3 position, Vector3 normal)
-            {
-                Position = position;
-                Normal = normal.sqrMagnitude > 0.0001f ? normal.normalized : Vector3.up;
-            }
-
-            public Vector3 Position { get; }
-
-            public Vector3 Normal { get; }
         }
     }
 }

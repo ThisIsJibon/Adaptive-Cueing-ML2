@@ -3,7 +3,11 @@
   "references": [
     "Unity.InputSystem",
     "Unity.XR.OpenXR",
-    "MagicLeap.SDK"
+    "MagicLeap.SDK",
+    "Unity.XR.ARFoundation",
+    "Unity.XR.ARSubsystems",
+    "Unity.XR.CoreUtils",
+    "Unity.XR.Interaction.Toolkit"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

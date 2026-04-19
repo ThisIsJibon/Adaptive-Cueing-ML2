@@ -15,6 +15,7 @@ namespace AdaptiveCueing
         [SerializeField] private FoGDetector foGDetector;
         [SerializeField] private CueController cueController;
         [SerializeField] private ARRenderer arRenderer;
+        [SerializeField] private AdaptiveCueMenuController menuController;
 
         private bool lastFoGState;
 
@@ -93,6 +94,7 @@ namespace AdaptiveCueing
             foGDetector = GetOrAddComponent(foGDetector);
             cueController = GetOrAddComponent(cueController);
             arRenderer = GetOrAddComponent(arRenderer);
+            menuController = GetOrAddComponent(menuController);
         }
 
         private void ConfigureReferences()
@@ -100,6 +102,11 @@ namespace AdaptiveCueing
             if (arRenderer != null)
             {
                 arRenderer.SetAnchor(sensorManager != null ? sensorManager.HeadTransform : null);
+            }
+
+            if (menuController != null)
+            {
+                menuController.Bind(arRenderer, sensorManager != null ? sensorManager.HeadTransform : null);
             }
         }
 

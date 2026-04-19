@@ -147,4 +147,20 @@ public class AdaptiveCueingEditModeTests
 
         Object.DestroyImmediate(cueObject);
     }
+
+    [Test]
+    public void CuePresetLibrary_ProvidesPaperInspiredCueOptionsWithPreviewTextures()
+    {
+        CuePresetDefinition[] presets = CuePresetLibrary.GetBuiltInPresets();
+
+        Assert.That(presets.Length, Is.GreaterThanOrEqualTo(5));
+        Assert.That(presets[0].DisplayName, Is.Not.Empty);
+
+        Texture2D preview = CuePresetLibrary.CreatePreviewTexture(presets[0], 96, 56);
+
+        Assert.That(preview.width, Is.EqualTo(96));
+        Assert.That(preview.height, Is.EqualTo(56));
+
+        Object.DestroyImmediate(preview);
+    }
 }
