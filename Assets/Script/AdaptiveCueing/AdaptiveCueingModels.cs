@@ -56,11 +56,25 @@ namespace AdaptiveCueing
         public float VerticalBobAmplitude;
         public float RhythmConsistency;
         public float StepFrequency;
+        public float CadenceStepsPerMinute;
+        public float LastStepLength;
         public float MovementEffort;
         public float AccelerationMagnitude;
         public int DetectedStepCount;
 
         public float RhythmIrregularity => 1f - RhythmConsistency;
+    }
+
+    [Serializable]
+    public struct StepEvent
+    {
+        public float Timestamp;
+        public int StepIndex;
+        public float Interval;
+        public float StepLength;
+        public float StepFrequency;
+        public float CadenceStepsPerMinute;
+        public Vector3 Position;
     }
 
     [Serializable]
