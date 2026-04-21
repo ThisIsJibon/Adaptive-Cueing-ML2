@@ -35,6 +35,7 @@ namespace AdaptiveCueing
         private RectTransform canvasRect;
         private Text selectionSummary;
         private int selectedIndex;
+        private bool menuPositioned;
 
         public bool IsVisible => canvasRoot != null && canvasRoot.activeSelf;
 
@@ -78,10 +79,7 @@ namespace AdaptiveCueing
 
         private void LateUpdate()
         {
-            if (IsVisible)
-            {
-                UpdateMenuPose();
-            }
+            // Menu is world-locked: only position once when first shown, then stay in place
         }
 
         private void OnDestroy()
@@ -110,7 +108,14 @@ namespace AdaptiveCueing
         {
             EnsureCanvas();
             canvasRoot.SetActive(true);
-            UpdateMenuPose();
+            
+            // Only position the menu the first time it's shown; after that it stays world-locked
+            if (!menuPositioned)
+            {
+                UpdateMenuPose();
+                menuPositioned = true;
+            }
+            
             RefreshVisualState();
         }
 
@@ -119,6 +124,16 @@ namespace AdaptiveCueing
             if (canvasRoot != null)
             {
                 canvasRoot.SetActive(false);
+            }
+        }
+
+        public void RepositionMenu()
+        {
+            if (canvasRoot != null)
+            {
+                UpdateMenuPose();
+                menuPositioned = true;
+                Debug.Log("[AdaptiveCueingMenu] Menu repositioned to current view.");
             }
         }
 
@@ -190,7 +205,7 @@ namespace AdaptiveCueing
             }
 
             canvasRoot = new GameObject("Adaptive Cue Menu");
-            canvasRoot.transform.SetParent(transform, false);
+            // Don't parent to this transform - keep it in world space so it stays locked
 
             Canvas canvas = canvasRoot.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
