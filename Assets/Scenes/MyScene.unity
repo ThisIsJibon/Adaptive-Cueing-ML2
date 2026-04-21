@@ -133,7 +133,6 @@ GameObject:
   - component: {fileID: 371315457}
   - component: {fileID: 371315456}
   - component: {fileID: 371315455}
-  - component: {fileID: 371315454}
   - component: {fileID: 371315453}
   - component: {fileID: 371315452}
   - component: {fileID: 371315451}
@@ -252,24 +251,6 @@ MonoBehaviour:
   foGDetector: {fileID: 371315450}
   cueController: {fileID: 371315449}
   arRenderer: {fileID: 371315456}
---- !u!114 &371315454
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 371315448}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cf78400b3e7ea5b41bee68a72a70c4ba, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  arRenderer: {fileID: 0}
-  groundDetector: {fileID: 0}
-  triggerAction: {fileID: 0}
-  bumperAction: {fileID: 0}
-  placeCueKey: 1
-  clearCuesKey: 17
 --- !u!114 &371315455
 MonoBehaviour:
   m_ObjectHideFlags: 0
