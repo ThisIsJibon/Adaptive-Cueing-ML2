@@ -13,6 +13,7 @@ namespace AdaptiveCueing
         [SerializeField] private ARRenderer arRenderer;
         [SerializeField] private MLSpaceGroundDetector groundDetector;
         [SerializeField] private AdaptiveCueMenuController menuController;
+        [SerializeField] private TelemetryLogger telemetryLogger;
 
         [Header("Magic Leap Controller Input")]
         [SerializeField] private InputActionReference triggerAction;
@@ -55,6 +56,11 @@ namespace AdaptiveCueing
         {
             ResolveSceneReferences();
 
+            if (telemetryLogger == null)
+            {
+                telemetryLogger = FindObjectOfType<TelemetryLogger>();
+            }
+
             if (arRenderer == null)
             {
                 Debug.LogError("[CueControllerInput] No ARRenderer found in scene.");
@@ -81,7 +87,13 @@ namespace AdaptiveCueing
                 return;
             }
 
-            arRenderer.PlaceNextCue();
+            if (arRenderer.PlaceNextCue() && telemetryLogger != null)
+            {
+                telemetryLogger.LogCuePlaced(
+                    arRenderer.PlacedCueCount,
+                    arRenderer.LatestCueState,
+                    arRenderer.LastPlacedCuePosition);
+            }
         }
 
         public void ClearAllCues()
@@ -89,6 +101,7 @@ namespace AdaptiveCueing
             if (arRenderer != null)
             {
                 arRenderer.ClearAllCues();
+                telemetryLogger?.LogEvent("cue_cleared", "");
             }
         }
 

@@ -81,6 +81,7 @@ namespace AdaptiveCueing
         private ARPlaneManager planeManager;
 
         public CueState LatestCueState { get; private set; }
+        public Vector3 LastPlacedCuePosition { get; private set; }
         public GroundCalibrationState CalibrationState => calibrationState;
         public float CalibrationProgress => manualCalibrationStarted ? Mathf.Clamp01((Time.time - calibrationStartTime) / calibrationDuration) : 0f;
         public int GroundSampleCount => groundSamples.Count;
@@ -237,6 +238,7 @@ namespace AdaptiveCueing
             cueVisual.Root.SetActive(true);
 
             placedCueCount++;
+            LastPlacedCuePosition = targetPosition;
 
             Debug.Log($"[AdaptiveCueing] Placed cue {placedCueCount}/{capturedCueCount} at position: {targetPosition} with preset {activeCuePreset.DisplayName}");
             return true;

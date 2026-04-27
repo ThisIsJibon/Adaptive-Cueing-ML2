@@ -453,6 +453,14 @@ namespace AdaptiveCueing
                 return false;
             }
 
+            TelemetryLogger logger = FindObjectOfType<TelemetryLogger>();
+            if (logger != null)
+            {
+                logger.LogEvent("ground_set", string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "ground_y={0:F3};space={1}", groundY, localizedSpaceName));
+            }
+
             return true;
         }
 

@@ -16,6 +16,7 @@ namespace AdaptiveCueing
         [SerializeField] private CueController cueController;
         [SerializeField] private ARRenderer arRenderer;
         [SerializeField] private AdaptiveCueMenuController menuController;
+        [SerializeField] private TelemetryLogger telemetryLogger;
 
         private bool lastFoGState;
 
@@ -26,6 +27,8 @@ namespace AdaptiveCueing
         public FoGDetectionResult LatestDetectionResult { get; private set; }
 
         public CueState LatestCueState { get; private set; }
+
+        public TelemetryLogger TelemetryLogger => telemetryLogger;
 
         private void Reset()
         {
@@ -80,9 +83,23 @@ namespace AdaptiveCueing
             LatestCueState = cueController.UpdateCueState(LatestProcessedFrame, LatestDetectionResult, deltaTime);
             arRenderer.RenderCueState(LatestCueState, Time.time, deltaTime);
 
-            if (logStateTransitions && LatestDetectionResult.IsFoG != lastFoGState)
+            telemetryLogger?.SampleFrame(LatestSensorFrame, LatestProcessedFrame, LatestDetectionResult, LatestCueState);
+
+            if (LatestDetectionResult.IsFoG != lastFoGState)
             {
-                Debug.Log($"Adaptive cueing FoG state changed: {LatestDetectionResult.IsFoG} (confidence {LatestDetectionResult.Confidence:F2})");
+                if (telemetryLogger != null)
+                {
+                    telemetryLogger.LogEvent(
+                        LatestDetectionResult.IsFoG ? "fog_onset" : "fog_end",
+                        string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                            "confidence={0:F2}", LatestDetectionResult.Confidence));
+                }
+
+                if (logStateTransitions)
+                {
+                    Debug.Log($"Adaptive cueing FoG state changed: {LatestDetectionResult.IsFoG} (confidence {LatestDetectionResult.Confidence:F2})");
+                }
+
                 lastFoGState = LatestDetectionResult.IsFoG;
             }
         }
@@ -95,6 +112,8 @@ namespace AdaptiveCueing
             cueController = GetOrAddComponent(cueController);
             arRenderer = GetOrAddComponent(arRenderer);
             menuController = GetOrAddComponent(menuController);
+            telemetryLogger = GetOrAddComponent(telemetryLogger);
+            telemetryLogger.Bind(dataProcessor);
         }
 
         private void ConfigureReferences()

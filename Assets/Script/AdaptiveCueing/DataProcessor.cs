@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,6 +7,8 @@ namespace AdaptiveCueing
     [DisallowMultipleComponent]
     public class DataProcessor : MonoBehaviour
     {
+        public event Action<StepEvent> StepDetected;
+
         [Header("Filtering")]
         [SerializeField, Range(1f, 20f)] private float signalSmoothing = 8f;
         [SerializeField, Range(0.1f, 3f)] private float baselineHeightTracking = 0.75f;
@@ -24,6 +27,10 @@ namespace AdaptiveCueing
         private float previousVerticalDisplacement;
         private float positiveDisplacementPeak;
         private float lastStepTimestamp = -1f;
+        private Vector3 lastStepPosition;
+        private bool hasLastStepPosition;
+        private float lastStepLength;
+        private int stepIndex;
 
         public ProcessedFrame LatestFrame { get; private set; }
 
@@ -40,6 +47,10 @@ namespace AdaptiveCueing
             previousVerticalDisplacement = 0f;
             positiveDisplacementPeak = 0f;
             lastStepTimestamp = -1f;
+            lastStepPosition = Vector3.zero;
+            hasLastStepPosition = false;
+            lastStepLength = 0f;
+            stepIndex = 0;
             LatestFrame = default;
         }
 
@@ -87,7 +98,7 @@ namespace AdaptiveCueing
             float verticalDisplacement = sensorFrame.Position.y - baselineHeight;
             smoothedVerticalDisplacement = Mathf.Lerp(smoothedVerticalDisplacement, verticalDisplacement, smoothingAlpha);
 
-            UpdateStepRhythm(sensorFrame.Timestamp, smoothedVerticalDisplacement);
+            UpdateStepRhythm(sensorFrame.Timestamp, smoothedVerticalDisplacement, sensorFrame.Position);
 
             float meanStepInterval = CalculateMeanStepInterval();
             float stepFrequency = meanStepInterval > 0f ? 1f / meanStepInterval : 0f;
@@ -109,6 +120,8 @@ namespace AdaptiveCueing
                 VerticalBobAmplitude = verticalBobAmplitude,
                 RhythmConsistency = rhythmConsistency,
                 StepFrequency = stepFrequency,
+                CadenceStepsPerMinute = stepFrequency * 60f,
+                LastStepLength = lastStepLength,
                 MovementEffort = movementEffort,
                 AccelerationMagnitude = smoothedAcceleration,
                 DetectedStepCount = recentStepIntervals.Count
@@ -117,7 +130,7 @@ namespace AdaptiveCueing
             return LatestFrame;
         }
 
-        private void UpdateStepRhythm(float timestamp, float verticalDisplacement)
+        private void UpdateStepRhythm(float timestamp, float verticalDisplacement, Vector3 currentPosition)
         {
             if (verticalDisplacement > 0f)
             {
@@ -140,9 +153,32 @@ namespace AdaptiveCueing
                     {
                         recentStepIntervals.Dequeue();
                     }
+
+                    if (hasLastStepPosition)
+                    {
+                        Vector2 horizontalDelta = new Vector2(
+                            currentPosition.x - lastStepPosition.x,
+                            currentPosition.z - lastStepPosition.z);
+                        lastStepLength = horizontalDelta.magnitude;
+                    }
+
+                    stepIndex++;
+                    float cadence = interval > 0f ? 60f / interval : 0f;
+                    StepDetected?.Invoke(new StepEvent
+                    {
+                        Timestamp = timestamp,
+                        StepIndex = stepIndex,
+                        Interval = interval,
+                        StepLength = lastStepLength,
+                        StepFrequency = interval > 0f ? 1f / interval : 0f,
+                        CadenceStepsPerMinute = cadence,
+                        Position = currentPosition
+                    });
                 }
 
                 lastStepTimestamp = timestamp;
+                lastStepPosition = currentPosition;
+                hasLastStepPosition = true;
                 positiveDisplacementPeak = 0f;
             }
 
