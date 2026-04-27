@@ -458,7 +458,7 @@ namespace AdaptiveCueing
             {
                 logger.LogEvent("ground_set", string.Format(
                     System.Globalization.CultureInfo.InvariantCulture,
-                    "ground_y={0:F3};space={1}", groundY, localizedSpaceName));
+                    "ground_y={0:F3};space={1}", point.y, localizedSpaceName));
             }
 
             return true;
